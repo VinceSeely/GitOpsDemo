@@ -1,0 +1,106 @@
+name: Promote QA to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      greeting_name:
+        description: 'Greeting name for production'
+        required: true
+        default: 'La Crosse Dev'
+
+env:
+  TOFU_VERSION: '1.6.0'
+
+jobs:
+  validate:
+    name: Validate QA Environment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check QA files exist
+        run: |
+          if [ ! -f "infra/environments/qa/main.tf" ]; then
+            echo "❌ QA environment not found. Promote dev to qa first."
+            exit 1
+          fi
+          echo "✅ QA environment exists"
+
+  create-prod-pr:
+    name: Create Production PR
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Copy QA infrastructure to Prod
+        run: |
+          SOURCE_DIR="infra/environments/qa"
+          TARGET_DIR="infra/environments/prod"
+
+          echo "📁 Copying infrastructure from qa to prod"
+
+          # Remove existing files (except .gitkeep)
+          find "$TARGET_DIR" -type f ! -name '.gitkeep' -delete 2>/dev/null || true
+
+          # Copy all .tf files from qa to prod
+          cp "$SOURCE_DIR"/*.tf "$TARGET_DIR/"
+
+          # Create prod-specific tfvars
+          cat > "$TARGET_DIR/terraform.tfvars" << EOF
+          environment   = "prod"
+          location      = "Central US"
+          greeting_name = "${{ inputs.greeting_name }}"
+          EOF
+
+          # Create prod-specific backend config
+          cat > "$TARGET_DIR/backend.tfvars" << EOF
+          resource_group_name  = "rg-tfstate"
+          storage_account_name = "tfstatelacrossedev"
+          container_name       = "tfstate"
+          key                  = "prod.terraform.tfstate"
+          EOF
+
+          echo "📝 Files promoted to prod:"
+          ls -la "$TARGET_DIR"
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: promote qa infrastructure to prod"
+          branch: promote/qa-to-prod
+          delete-branch: true
+          title: "🚀 Promote QA to Production"
+          body: |
+            ## Production Promotion: QA → Prod
+
+            This PR promotes the QA infrastructure to Production.
+
+            ### Configuration
+            - **Greeting:** ${{ inputs.greeting_name }}
+
+            ### Changes Included
+            - Infrastructure files copied from `infra/environments/qa/` to `infra/environments/prod/`
+            - Environment-specific values updated for production
+
+            ### What happens when merged
+            1. Production infrastructure will be deployed via the deploy-prod workflow
+            2. Application will be deployed to the Production Static Web App
+
+            ### ⚠️ Production Checklist
+            - [ ] QA testing completed
+            - [ ] Infrastructure changes reviewed
+            - [ ] Greeting message verified
+            - [ ] Team notified of deployment
+
+            ---
+            🤖 *Automated by GitHub Actions*
+          labels: |
+            promotion
+            production
+            needs-review

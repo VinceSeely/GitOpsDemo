@@ -1,0 +1,87 @@
+name: Promote Dev to QA (Auto PR)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infra/environments/dev/**'
+
+env:
+  TOFU_VERSION: '1.6.0'
+
+jobs:
+  create-qa-pr:
+    name: Create QA Promotion PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Copy dev infrastructure to qa
+        run: |
+          SOURCE_DIR="infra/environments/dev"
+          TARGET_DIR="infra/environments/qa"
+
+          echo "📁 Copying infrastructure from dev to qa"
+
+          # Remove existing files (except .gitkeep)
+          find "$TARGET_DIR" -type f ! -name '.gitkeep' -delete 2>/dev/null || true
+
+          # Copy all .tf files from dev to qa
+          cp "$SOURCE_DIR"/*.tf "$TARGET_DIR/"
+
+          # Create qa-specific tfvars (keep greeting from dev or use default)
+          DEV_GREETING=$(grep 'greeting_name' "$SOURCE_DIR/terraform.tfvars" | cut -d'"' -f2 || echo "La Crosse Dev QA")
+
+          cat > "$TARGET_DIR/terraform.tfvars" << EOF
+          environment   = "qa"
+          location      = "Central US"
+          greeting_name = "${DEV_GREETING} (QA)"
+          EOF
+
+          # Create qa-specific backend config
+          cat > "$TARGET_DIR/backend.tfvars" << EOF
+          resource_group_name  = "rg-tfstate"
+          storage_account_name = "tfstatelacrossedev"
+          container_name       = "tfstate"
+          key                  = "qa.terraform.tfstate"
+          EOF
+
+          echo "📝 Files promoted to qa:"
+          ls -la "$TARGET_DIR"
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: promote dev infrastructure to qa"
+          branch: promote/dev-to-qa
+          delete-branch: true
+          title: "🚀 Promote Dev to QA"
+          body: |
+            ## Automated Promotion: Dev → QA
+
+            This PR was automatically created because changes were detected in the dev environment.
+
+            ### Changes Included
+            - Infrastructure files copied from `infra/environments/dev/` to `infra/environments/qa/`
+            - Environment-specific values updated (environment name, tfstate key)
+            - Greeting updated with "(QA)" suffix
+
+            ### What happens when merged
+            1. QA infrastructure will be deployed via the deploy-qa workflow
+            2. Application will be deployed to the QA Static Web App
+
+            ### Checklist
+            - [ ] Review the infrastructure changes
+            - [ ] Verify the greeting message is appropriate for QA
+            - [ ] Approve and merge to deploy
+
+            ---
+            🤖 *Automated by GitHub Actions*
+          labels: |
+            promotion
+            qa
+            automated

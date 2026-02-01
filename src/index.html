@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>La Crosse Dev - DevOps Demo</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">🚀</div>
+            <h1>La Crosse Dev Meetup</h1>
+            <p class="subtitle">Infrastructure as Code Demo</p>
+        </header>
+
+        <main>
+            <div class="greeting-card">
+                <h2 id="greeting">Loading...</h2>
+                <p class="message">This app was deployed using OpenTofu and GitHub Actions</p>
+            </div>
+
+            <div class="environment-badge" id="env-badge">
+                <span class="env-label">Environment:</span>
+                <span class="env-value" id="env-name">unknown</span>
+            </div>
+
+            <div class="info-section">
+                <h3>What You're Seeing</h3>
+                <ul>
+                    <li>✅ Static Web App hosted on Azure Storage</li>
+                    <li>✅ Infrastructure provisioned with OpenTofu</li>
+                    <li>✅ CI/CD powered by GitHub Actions</li>
+                    <li>✅ Environment promotion workflow (Dev → QA → Prod)</li>
+                </ul>
+            </div>
+
+            <div class="deploy-info">
+                <p><strong>Deployed:</strong> <span id="deploy-time">--</span></p>
+                <p><strong>Version:</strong> <span id="version">1.0.0</span></p>
+            </div>
+        </main>
+
+        <footer>
+            <p>Built with ❤️ for the La Crosse Developer Community</p>
+        </footer>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

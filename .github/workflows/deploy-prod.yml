@@ -1,0 +1,152 @@
+name: Deploy Production Environment
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infra/environments/prod/**'
+  workflow_dispatch:
+    inputs:
+      greeting_name:
+        description: 'Custom greeting name (optional)'
+        required: false
+        default: ''
+
+env:
+  TOFU_VERSION: '1.6.0'
+  WORKING_DIR: 'infra/environments/prod'
+
+jobs:
+  infracost:
+    name: Infracost Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Infracost
+        uses: infracost/actions/setup@v3
+        with:
+          api-key: ${{ secrets.INFRACOST_API_KEY }}
+
+      - name: Run Infracost
+        run: |
+          infracost breakdown --path=${{ env.WORKING_DIR }} \
+            --format=json \
+            --out-file=/tmp/infracost.json
+
+          echo "## 💰 Production Infrastructure Cost Estimate" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          infracost output --path=/tmp/infracost.json --format=table >> $GITHUB_STEP_SUMMARY
+
+  deploy-infrastructure:
+    name: Deploy Production Infrastructure
+    runs-on: ubuntu-latest
+    needs: infracost
+    environment: prod
+    outputs:
+      website_url: ${{ steps.apply.outputs.website_url }}
+      static_web_app_name: ${{ steps.apply.outputs.static_web_app_name }}
+      api_key: ${{ steps.apply.outputs.api_key }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get greeting from tfvars
+        id: config
+        run: |
+          if [ -n "${{ inputs.greeting_name }}" ]; then
+            echo "greeting=${{ inputs.greeting_name }}" >> $GITHUB_OUTPUT
+          else
+            GREETING=$(grep 'greeting_name' ${{ env.WORKING_DIR }}/terraform.tfvars | cut -d'"' -f2)
+            echo "greeting=${GREETING}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Initialize OpenTofu
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          tofu init \
+            -backend-config="resource_group_name=${{ secrets.TFSTATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ secrets.TFSTATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ secrets.TFSTATE_CONTAINER }}" \
+            -backend-config="key=prod.terraform.tfstate"
+
+      - name: Plan Infrastructure
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          tofu plan \
+            -var="environment=prod" \
+            -var="greeting_name=${{ steps.config.outputs.greeting }}" \
+            -out=tfplan
+
+      - name: Apply Infrastructure
+        id: apply
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          tofu apply -auto-approve tfplan
+
+          echo "website_url=$(tofu output -raw website_url)" >> $GITHUB_OUTPUT
+          echo "static_web_app_name=$(tofu output -raw static_web_app_name)" >> $GITHUB_OUTPUT
+          echo "api_key=$(tofu output -raw api_key)" >> $GITHUB_OUTPUT
+
+  deploy-app:
+    name: Deploy Application to Production
+    runs-on: ubuntu-latest
+    needs: deploy-infrastructure
+    environment: prod
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get greeting from tfvars
+        id: config
+        run: |
+          if [ -n "${{ inputs.greeting_name }}" ]; then
+            echo "greeting=${{ inputs.greeting_name }}" >> $GITHUB_OUTPUT
+          else
+            GREETING=$(grep 'greeting_name' ${{ env.WORKING_DIR }}/terraform.tfvars | cut -d'"' -f2)
+            echo "greeting=${GREETING}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate config.js
+        run: |
+          cat > src/config.js << EOF
+          window.APP_CONFIG = {
+              greetingName: "${{ steps.config.outputs.greeting }}",
+              environment: "prod",
+              version: "${{ github.sha }}",
+              deployTime: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          };
+          EOF
+
+          cat src/config.js
+
+      - name: Deploy to Azure Static Web App
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ needs.deploy-infrastructure.outputs.api_key }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: "upload"
+          app_location: "src"
+          skip_app_build: true
+
+      - name: Output Website URL
+        run: |
+          echo "## 🚀 Production Deployment Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Website URL:** ${{ needs.deploy-infrastructure.outputs.website_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** prod" >> $GITHUB_STEP_SUMMARY
+          echo "**Greeting:** ${{ steps.config.outputs.greeting }}" >> $GITHUB_STEP_SUMMARY
