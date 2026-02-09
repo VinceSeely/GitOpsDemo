@@ -44,28 +44,42 @@ jobs:
 
           echo "📁 Copying infrastructure from qa to prod"
 
-          # Remove existing files (except .gitkeep)
-          find "$TARGET_DIR" -type f ! -name '.gitkeep' -delete 2>/dev/null || true
+          # Remove existing files (except .gitkeep and backend.tf)
+          find "$TARGET_DIR" -type f ! -name '.gitkeep' ! -name 'backend.tf' -delete 2>/dev/null || true
 
-          # Copy all .tf files from qa to prod
-          cp "$SOURCE_DIR"/*.tf "$TARGET_DIR/"
+          # Copy main infrastructure files (excluding backend.tf which is already environment-specific)
+          for file in main.tf variables.tf outputs.tf; do
+            if [ -f "$SOURCE_DIR/$file" ]; then
+              cp "$SOURCE_DIR/$file" "$TARGET_DIR/"
+              echo "  ✓ Copied $file"
+            fi
+          done
 
-          # Create prod-specific tfvars
-          cat > "$TARGET_DIR/terraform.tfvars" << EOF
-          environment   = "prod"
-          location      = "Central US"
-          greeting_name = "${{ inputs.greeting_name }}"
+          # Generate backend.tf for Prod (if it doesn't exist)
+          if [ ! -f "$TARGET_DIR/backend.tf" ]; then
+            echo "  ✓ Creating backend.tf for Prod environment"
+            cat > "$TARGET_DIR/backend.tf" << 'EOF'
+          # Terraform backend configuration for remote state
+          # State is stored in Azure Storage Account
+          # Run ../../bootstrap-state-storage.sh first to create the storage infrastructure
+
+          terraform {
+            backend "azurerm" {
+              resource_group_name  = "rg-vincepreso-tfstate"
+              storage_account_name = "tfstatevincepreso"
+              container_name       = "tfstate"
+              key                  = "prod.terraform.tfstate"
+              use_oidc             = true
+              # tenant_id and client_id are set via ARM_TENANT_ID and ARM_CLIENT_ID environment variables
+            }
+          }
           EOF
+          else
+            echo "  ✓ backend.tf already exists for Prod"
+          fi
 
-          # Create prod-specific backend config
-          cat > "$TARGET_DIR/backend.tfvars" << EOF
-          resource_group_name  = "rg-tfstate"
-          storage_account_name = "tfstatelacrossedev"
-          container_name       = "tfstate"
-          key                  = "prod.terraform.tfstate"
-          EOF
-
-          echo "📝 Files promoted to prod:"
+          echo ""
+          echo "📝 Files in Prod environment:"
           ls -la "$TARGET_DIR"
 
       - name: Create Pull Request

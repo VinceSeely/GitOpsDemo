@@ -10,13 +10,11 @@ terraform {
       version = "~> 3.0"
     }
   }
-
-  # Backend will be configured via CLI for each environment
-  backend "azurerm" {}
 }
 
 provider "azurerm" {
   features {}
+  use_oidc = true
 }
 
 # Resource Group
